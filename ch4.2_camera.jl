@@ -50,7 +50,6 @@ function render_scene(filename, image_width::Int)
                 pixel_center = pixel00_loc + Float64(i - 1) * pixel_delta_u + Float64(j - 1) * pixel_delta_v
                 ray_direction = pixel_center - camera_center
                 r = Ray(camera_center, ray_direction)
-                println(r.direction.y)
 
                 pixel_color = ray_color(r)
                 write_color(file, pixel_color)

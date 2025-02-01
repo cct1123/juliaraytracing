@@ -56,10 +56,11 @@ end
 # Print vector nicely
 Base.show(io::IO, v::Vec3) = print(io, "Vec3(", v.x, ", ", v.y, ", ", v.z, ")")
 
-# Example Usage
-v1 = Vec3(3.0, 4.0, 0.0)
-v2 = Vec3(1.0, 2.0, 3.0)
+
 if abspath(@__FILE__) == abspath(PROGRAM_FILE)
+    # Example Usage
+    v1 = Vec3(3.0, 4.0, 0.0)
+    v2 = Vec3(1.0, 2.0, 3.0)
     println("v1 + v2 = ", v1 + v2)         # Vector addition
     println("v1 - v2 = ", v1 - v2)         # Vector subtraction
     println("Dot product = ", v1 ⋅ v2) # Dot product

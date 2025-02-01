@@ -16,17 +16,18 @@ function at(ray::Ray, t::Float64)
     return ray.origin + t * ray.direction
 end
 
-# Example usage of Ray
-origin = Vec3(0.0, 0.0, 0.0)
-direction = Vec3(1.0, 0.0, 0.0)
-ray = Ray(origin, direction)
-
-
-# Get the point on the ray at t = 2.0
-point = at(ray, 2.0)
-
 
 if abspath(@__FILE__) == abspath(PROGRAM_FILE)
+    # Example usage of Ray
+    origin = Vec3(0.0, 0.0, 0.0)
+    direction = Vec3(1.0, 0.0, 0.0)
+    ray = Ray(origin, direction)
+
+
+    # Get the point on the ray at t = 2.0
+    point = at(ray, 2.0)
+
+
     println("Ray Origin = ", ray.origin)
     println("Ray Direction = ", ray.direction)
 
