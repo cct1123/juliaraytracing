@@ -1,13 +1,14 @@
 using LinearAlgebra
 using PlotlyJS
 using ForwardDiff, Roots
-using Random  # To generate random colors
+using Random 
 
 include("math.jl")
 
 const Vec3 = Vector{Float64};
 const Vec2 = Vector{Float64};
 const Point = Vec3;
+const invalid_vector =[NaN, NaN, NaN]
 
 # Define the Ray structure ===============================================================================
 mutable struct Ray
@@ -19,9 +20,12 @@ end
 
 # Define the structure for light sources ===============================================================================
 function isotropic_distribution()
-    θ = 2π * rand()     # Azimuthal angle (0 to 2π)
-    ϕ = acos(2 * rand() - 1)  # Polar angle (cosine-weighted for uniform sphere)
-    return [sin(ϕ) * cos(θ), sin(ϕ) * sin(θ), cos(ϕ)]
+    function sample_direction()
+        θ = 2π * rand()     # Azimuthal angle (0 to 2π)
+        ϕ = acos(2 * rand() - 1)  # Polar angle (cosine-weighted for uniform sphere)
+        return [sin(ϕ) * cos(θ), sin(ϕ) * sin(θ), cos(ϕ)]
+    end
+    return () -> sample_direction()
 end
 
 function collimated_distribution(direction::Vec3)
@@ -74,9 +78,7 @@ function emit_rays(source::Source, num_rays::Int)::Vector{Ray}
 end
 # ==============================================================================================================
 
-# Define the structure for surfaces and objects ===============================================================================
-# Abstract Object for the rays to hit 
-
+# Define the structure for surfaces  ===============================================================================
 struct  Frame 
     origin:: Point
     orientation:: Matrix{Float64} # a 3x3 rotation matrix that transform the lab frame to the object frame
@@ -197,7 +199,7 @@ function draw_surface(surface:: Surface, nx::Int=100, ny::Int=100, color="random
     return [surface_data]
 end
 
-function draw_snormals(surface:: Surface, num:: Int,  ray_length=0.5, arrow_scale=0.3)
+function draw_snormals(surface:: Surface, num:: Int,  ray_length::Float64=0.5, arrow_scale::Float64=0.3, color="random")
     xarray = range(surface.bounds[1][1], stop=surface.bounds[1][2], length=nx)
     yarray = range(surface.bounds[2][1], stop=surface.bounds[2][2], length=ny)
 
@@ -215,13 +217,14 @@ function draw_snormals(surface:: Surface, num:: Int,  ray_length=0.5, arrow_scal
         xx, yy, zz = surface.frame.orientation * [xx, yy, zz] + surface.frame.origin
         push!(rays_snorm, Ray([xx, yy, zz], snorm))
     end
-    return draw_rays(rays_snorm, ray_length=ray_length, arrow_scale=arrow_scale)
+    return draw_rays(rays_snorm, ray_length, arrow_scale, color)
 end
 
 # Function to generate and plot rays with arrows
-function draw_rays(rays::Vector{Ray}; ray_length=0.5, arrow_scale=0.3)
+function draw_rays(rays::Vector{Ray}, ray_length::Float64=0.5, arrow_scale::Float64=0.3, color::String="random")
     traces = GenericTrace[]
-    color = string("rgb(", round(255 * rand()), ",", round(255 * rand()), ",", round(255 *  rand()), ")")
+
+    color = color == "random" ? "rgb($(rand(0:255)), $(rand(0:255)), $(rand(0:255)))" : color
     # Line traces for the rays
     for ray in rays
         start = ray.origin
@@ -253,11 +256,108 @@ function draw_rays(rays::Vector{Ray}; ray_length=0.5, arrow_scale=0.3)
     return traces
 end
 # ==============================================================================================================
+
+
+#  Define the structure for material and objects ==========================================================================
+abstract type Material end
+
+struct Dielectric <: Material
+    n:: Float64
+end
+
+struct Metal <: Material
+    fuzz:: Float64
+    albedo:: Vec3
+end
+
+abstract type Object end # object that can be hit by rays
+struct BoundObject <: Object
+    frame:: Frame # the frame of the object
+    surfaces:: Vector{Surface}
+    material:: Material
+    bounds:: Vector{Tuple{Float64, Float64}}
+end
+
+struct Sheet <: Object
+    frame:: Frame # the frame of the object
+    surfaces:: Vector{Surface}
+    material:: Material
+end
+
+struct Blocker <: Object
+    frame:: Frame # the frame of the object
+    surfaces:: Vector{Surface}
+end
+
+function draw_object(
+    obj::Object, 
+    num_sx::Int, 
+    num_sy::Int, 
+    num_sn::Int,
+    ;
+    drawnormals::Bool=true, 
+    arrow_scale::Float64=1.0,
+    color_sf::String="random", 
+    color_sn::String="random",
+    display::Bool=true)
+    objsize = sum([upper - lower for (lower, upper) in obj.bounds])/3.0
+    arrsize = objsize/20.0*arrow_scale
+    color_sf = color_sf == "random" ? "rgb($(rand(0:255)), $(rand(0:255)), $(rand(0:255)))" : color_sf
+    color_sn = color_sn == "random" ? "rgb($(rand(0:255)), $(rand(0:255)), $(rand(0:255)))" : color_sn
+    plottraces = GenericTrace[]
+    for ss in obj.surfaces
+        # rotate and shift the surface by the object's coordinates first
+        frame_sf_lab = Frame(obj.frame.origin+ss.frame.origin, obj.frame.orientation*ss.frame.orientation)
+        ss_tolab = ImplicitSurface(
+            frame_sf_lab, 
+            ss.shape, 
+            ss.bounds, 
+            ss.border
+        ) # only work ImplicitSurface for now TODO: generalize it
+
+        append!(plottraces, vcat(
+            draw_surface(ss_tolab, num_sx, num_sy, color_sf), 
+            draw_snormals(ss_tolab, num_sn, 0.5*arrsize, 0.3*arrsize, color_sn)
+            )) 
+    end
+
+    if display
+        layout = PlotlyJS.Layout(
+        title="Box Surface Plot",
+        width=800,   # Set width in pixels
+        height=600,  # Set height in pixels
+        scene=attr(
+            xaxis=attr(visible=false, showgrid=false, zeroline=false),
+            yaxis=attr(visible=false, showgrid=false, zeroline=false),
+            zaxis=attr(visible=false, showgrid=false, zeroline=false),
+            bgcolor="rgba(0,0,0,0)",  # Transparent background
+            aspectmode="data"
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",  # Transparent outer background
+        showlegend=false
+        )
+        
+        # Display the plot
+        fig = PlotlyJS.plot(plottraces , layout);
+        PlotlyJS.display(fig)   
+        return NaN
+    else
+        return plottraces
+    end
+end
+# ================================================================================================================
+
+# how the rays interact with the objects and surfaces=============================================================================
+
+
+
+# ================================================================================================================
+
+# =============================================================================================================
 # ==============================================================================================================
 
 
 if abspath(@__FILE__) == abspath(PROGRAM_FILE)
-    # example usage of the drawing functions
     focal_length = 2.0  # Focal length of the paraboloid
     hem_radius = 4.0  # Radius of the hemispherical boundary
     bound_radius = 4.5
