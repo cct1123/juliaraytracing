@@ -1,456 +1,196 @@
-using LinearAlgebra
-using PlotlyJS
-using ForwardDiff, Roots
-using Random 
-
-include("math.jl")
-
-const Vec3 = Vector{Float64};
-const Vec2 = Vector{Float64};
-const Point = Vec3;
-const invalid_vector =[NaN, NaN, NaN]
-
-# Define the Ray structure ===============================================================================
-mutable struct Ray
-    origin::Point # 3d vector origin position
-    direction::Vec3 # 3d vector direction
-    # polarization:: Vec2 # 2d vector polariation looking into the propagation direction, s-wave , p-wave components
-end
-# ==============================================================================================================
-
-# Define the structure for light sources ===============================================================================
-function isotropic_distribution()
-    function sample_direction()
-        θ = 2π * rand()     # Azimuthal angle (0 to 2π)
-        ϕ = acos(2 * rand() - 1)  # Polar angle (cosine-weighted for uniform sphere)
-        return [sin(ϕ) * cos(θ), sin(ϕ) * sin(θ), cos(ϕ)]
-    end
-    return () -> sample_direction()
-end
-
-function collimated_distribution(direction::Vec3)
-    return () -> normalize(direction)  # Always emits in the same direction
-end
-
-function cone_distribution(main_direction::Vec3, spread_angle::Float64)
-    function sample_direction()
-        θ = spread_angle * sqrt(rand())  # Cone angle (scaled probability)
-        ϕ = 2π * rand()  # Uniform azimuth
-
-        # Local coordinate system
-        z = normalize(main_direction)
-        x = normalize(cross(z, [0, 1, 0]))  # Ensure perpendicular x
-        y = cross(z, x)  # Ensure perpendicular y
-
-        # Convert to Cartesian
-        dir = cos(θ) * z + sin(θ) * (cos(ϕ) * x + sin(ϕ) * y)
-        return normalize(dir)
-    end
-    return sample_direction
-end
-
-custom_dist = () -> normalize(randn(3))  # Gaussian-distributed emission
-
-abstract type Source end
-
-struct PointSource <: Source
-    # define the point source structure
-    center::Point # 3d vector center position
-    intensity::Float64 # intensity of the light source
-    distribution::Function  # Function that returns a direction
-end
-
-struct EnsembleSource <: Source
-    objects::Vector{Source}
-end
-
-function emit_ray(source::Source)::Ray
-    direction = source.distribution()
-    return Ray(source.center, direction)
-end
-
-function emit_rays(source::Source, num_rays::Int)::Vector{Ray}
-    rays = Ray[]
-    for _ in 1:num_rays
-        push!(rays, emit_ray(source))
-    end
-    return rays
-end
-# ==============================================================================================================
-
-# Define the structure for surfaces  ===============================================================================
-struct  Frame 
-    origin:: Point
-    orientation:: Matrix{Float64} # a 3x3 rotation matrix that transform the lab frame to the object frame
-    
-end
-
-abstract type Surface end
-
-struct ImplicitSurface <: Surface 
-    # define the surface structure
-    frame:: Frame # the frame of the surface
-    shape:: Function # bound functions specifying the 3d shape, f(x, y, z)=0
-    bounds:: Vector{Tuple{Float64, Float64}}
-    border:: Function # bound functions specifying the boundary line
-end
-
-function shape_plane(center::Vec3)
-    return (p) -> p[3] - center[3]
+mutable struct Setup
+    sources:: Vector{Source}
+    objects:: Vector{Object}
+    detectors:: Vector{Detector}
 end
 
 
-# example shape function: Define a spherical surface as the shape function
-function shape_sphere(center::Vec3, radius::Float64)
-    return (p) -> (p - center)⋅(p - center) - radius^2  # Sphere equation: ||p - center|| = radius
-end
-
-function shape_hemisphere(center::Vec3, radius::Float64)
-    function result(p)
-        incap = radius^2-(p[1] - center[1])^2-(p[2] - center[2])^2
-        return incap < 0 ? NaN : (p[3]- center[3]) - sqrt(incap) 
-    end
-    return (p) -> result(p)
-end
-
-# Define a paraboloid shape function
-# function shape_paraboloid(center::Vec3, f::Float64)
-#     return (p::Vec3) -> (p[3]- center[3]) - ((p[1]- center[1])^2 + (p[2]- center[2])^2) / (4 * f)  # Paraboloid equation: z = (x^2 + y^2) / (4f)
-# end
-
-function shape_paraboloid(center::Vec3, f::Float64)
-    return (p) -> (p[3]- center[3]) - ((p[1]- center[1])^2 + (p[2]- center[2])^2) / (4 * f)  # Paraboloid equation: z = (x^2 + y^2) / (4f)
-end
-
-function shape_mexican_hat(center::Vec3, A::Float64, B::Float64, C::Float64)
-    return (p) -> (p[3] - center[3]) - A * (1 - ((p[1] - center[1])^2 + (p[2] - center[2])^2) / B^2) * exp(-((p[1] - center[1])^2 + (p[2] - center[2])^2) / (2 * C^2))
-end
-
-
-function shape_coneflat(center::Vec3, height::Float64, radius::Float64, angle::Float64)
-    function result(p)
-        x, y, z = p .- center  # Shift coordinates relative to the center
-        radial_dist = sqrt(x^2 + y^2)
-        r_top = radius
-        r_bottom = radius + height * tan(angle)
-
-        if radial_dist <= radius
-            return z-height  # Outside the top
-        elseif radial_dist <= r_bottom
-            return  z-height+(radial_dist-radius)/tan(angle) # Conical region
-        else
-            return z  # Flat bottom outside cone
-        end
-    end
-    return (p) -> result(p)
-end
-
-function border_circle(radius::Float64)
-    return (p) -> p⋅p - radius^2  # Circle equation: ||p - center|| = radius
-end
-
-function border_bounds()
-    return (p) -> -1  #  bound line for surface is defined by bounds
-end
-
-function surface_normal(p, surface::Surface)
-
-    # Calculate the gradient of the surface shape function
-    grad_S = ForwardDiff.gradient(surface.shape, p)
-    
-    # Normalize the gradient to get the normal
-    return grad_S ./ norm(grad_S)
-end
-
-function draw_surface(surface:: Surface, nx::Int=100, ny::Int=100, color="random")
-    # plot the surface
-    xarray = range(surface.bounds[1][1], stop=surface.bounds[1][2], length=nx)
-    yarray = range(surface.bounds[2][1], stop=surface.bounds[2][2], length=ny)
-    xmesh = zeros(nx, ny)
-    ymesh = zeros(nx, ny)
-    zmesh = zeros(nx, ny)
-    for ii in 1:1:nx, jj in 1:1:ny
-    
-        bounded = surface.border([xarray[ii], yarray[jj]]) < 0
-        xval = xarray[ii]
-        yval = yarray[jj]
-        zval = bounded ? -surface.shape([xarray[ii], yarray[jj], 0.0]) : NaN
-
-        xval, yval, zval = surface.frame.orientation * [xval, yval, zval]
-        xmesh[ii, jj] = xval + surface.frame.origin[1]
-        ymesh[ii, jj] = yval + surface.frame.origin[2]
-        zmesh[ii, jj] = zval + surface.frame.origin[3]
-    end
-    # Generate a random color (RGB format)
-    if color=="random"
-        color = string("rgb(", round(255 * rand()), ",", round(255 * rand()), ",", round(255 *  rand()), ")")
-    end;
-
-    surface_data = PlotlyJS.surface(
-        x=xmesh,
-        y=ymesh,
-        z=zmesh,
-        surfacecolor=zmesh*0.0,
-        colorscale=[(0, color), (1, color)],  # Fix the color scale to the same random color
-        shading="smooth",  # Smoothing the shading on the surface
-        showscale=false,
-        opacity=0.8
-        )
-    return [surface_data]
-end
-
-function draw_snormals(surface:: Surface, num:: Int,  ray_length::Float64=0.5, arrow_scale::Float64=0.3, color="random")
-    xarray = range(surface.bounds[1][1], stop=surface.bounds[1][2], length=nx)
-    yarray = range(surface.bounds[2][1], stop=surface.bounds[2][2], length=ny)
-
-    rays_snorm = Ray[]
-    for ii in 1:1:num
-        bounded = false
-        while ~bounded
-            xx = rand(surface.bounds[1][1]:surface.bounds[1][2])
-            yy = rand(surface.bounds[2][1]:surface.bounds[2][2])
-            bounded = surface.border([xx, yy]) < 0
-        end
-        zz = -surface.shape([xx,yy,0.0])
-        snorm = surface_normal([xx, yy, zz], surface)
-        snorm = surface.frame.orientation * snorm
-        xx, yy, zz = surface.frame.orientation * [xx, yy, zz] + surface.frame.origin
-        push!(rays_snorm, Ray([xx, yy, zz], snorm))
-    end
-    return draw_rays(rays_snorm, ray_length, arrow_scale, color)
-end
-
-# Function to generate and plot rays with arrows
-function draw_rays(rays::Vector{Ray}, ray_length::Float64=0.5, arrow_scale::Float64=0.3, color::String="random")
-    traces = GenericTrace[]
-
-    color = color == "random" ? "rgb($(rand(0:255)), $(rand(0:255)), $(rand(0:255)))" : color
-    # Line traces for the rays
-    for ray in rays
-        start = ray.origin
-        stop = start + normalize(ray.direction) * ray_length
-        trace_rays = scatter3d(
-            x=[start[1], stop[1]], y=[start[2], stop[2]], z=[start[3], stop[3]],
-            mode="lines",
-            line=attr(color=color,width=3)
-        )
-        push!(traces, trace_rays)
-    end
-
-    # Arrow traces using cones
-    origins = hcat([ray.origin + normalize(ray.direction) * ray_length for ray in rays]...)  # Arrow positions
-    directions = hcat([normalize(ray.direction) for ray in rays]...)  # Arrow directions
-
-    trace_arrows = cone(
-        x=origins[1, :], y=origins[2, :], z=origins[3, :],  # Positions
-        u=directions[1, :], v=directions[2, :], w=directions[3, :],  # Directions
-        sizemode="raw",
-        sizeref=arrow_scale,  # Controls arrow size
-        anchor="tail",
-        showscale=false,
-        colorscale=[(0, color), (1, color)],
-        opacity=0.8
-    )
-    push!(traces, trace_arrows)
-
-    return traces
-end
-# ==============================================================================================================
-
-
-#  Define the structure for material and objects ==========================================================================
-abstract type Material end
-
-struct Dielectric <: Material
-    n:: Float64
-end
-
-struct Metal <: Material
-    fuzz:: Float64
-    albedo:: Vec3
-end
-
-abstract type Object end # object that can be hit by rays
-struct BoundObject <: Object
-    frame:: Frame # the frame of the object
-    surfaces:: Vector{Surface}
+mutable struct HitRecord
+    t::Float64               # time of intersection
+    p::Vec3                  # Intersection point
+    normal::Vec3             # Surface normal
+    aligned::Bool         # whether the ray direction align with surface normal
     material:: Material
-    bounds:: Vector{Tuple{Float64, Float64}}
-end
-
-struct Sheet <: Object
-    frame:: Frame # the frame of the object
-    surfaces:: Vector{Surface}
-    material:: Material
-end
-
-struct Blocker <: Object
-    frame:: Frame # the frame of the object
-    surfaces:: Vector{Surface}
-end
-
-function draw_object(
-    obj::Object, 
-    num_sx::Int, 
-    num_sy::Int, 
-    num_sn::Int,
-    ;
-    drawnormals::Bool=true, 
-    arrow_scale::Float64=1.0,
-    color_sf::String="random", 
-    color_sn::String="random",
-    display::Bool=true)
-    objsize = sum([upper - lower for (lower, upper) in obj.bounds])/3.0
-    arrsize = objsize/20.0*arrow_scale
-    color_sf = color_sf == "random" ? "rgb($(rand(0:255)), $(rand(0:255)), $(rand(0:255)))" : color_sf
-    color_sn = color_sn == "random" ? "rgb($(rand(0:255)), $(rand(0:255)), $(rand(0:255)))" : color_sn
-    plottraces = GenericTrace[]
-    for ss in obj.surfaces
-        # rotate and shift the surface by the object's coordinates first
-        frame_sf_lab = Frame(obj.frame.origin+ss.frame.origin, obj.frame.orientation*ss.frame.orientation)
-        ss_tolab = ImplicitSurface(
-            frame_sf_lab, 
-            ss.shape, 
-            ss.bounds, 
-            ss.border
-        ) # only work ImplicitSurface for now TODO: generalize it
-
-        append!(plottraces, vcat(
-            draw_surface(ss_tolab, num_sx, num_sy, color_sf), 
-            draw_snormals(ss_tolab, num_sn, 0.5*arrsize, 0.3*arrsize, color_sn)
-            )) 
+    function HitRecord(t, p, normal, aligned, material=AIR)
+        return new(t, p, normal, aligned, material)
     end
+end
 
-    if display
-        layout = PlotlyJS.Layout(
-        title="Box Surface Plot",
-        width=800,   # Set width in pixels
-        height=600,  # Set height in pixels
-        scene=attr(
-            xaxis=attr(visible=false, showgrid=false, zeroline=false),
-            yaxis=attr(visible=false, showgrid=false, zeroline=false),
-            zaxis=attr(visible=false, showgrid=false, zeroline=false),
-            bgcolor="rgba(0,0,0,0)",  # Transparent background
-            aspectmode="data"
-        ),
-        paper_bgcolor="rgba(0,0,0,0)",  # Transparent outer background
-        showlegend=false
-        )
+
+function hit(surface::Surface, ray::Ray; t_min::Float64=1e-6, t_max::Float64=1e6)::Union{HitRecord, Nothing}
+    """
+    assume the ray direction is normalized, 
+    Arguments:
+        surface: Surface with frame, shape function, bounds and border
+
+    return: 
+        t_hit: time required to travel from ray origin to hit point
+        p_hit: hit point on the surface in the surface frame
+    """
+    # ray_original = deepcopy(ray) 
+
+    # initiate the hit HitRecord
+    hitrecord = nothing
+    # transform ray into the surface frame
+    transform_ray_to!(ray, surface.frame)
+    # println("trying to hit a surface")
+    # TODO: before searching for root, estimate the hit time and hit point first using the frame and bounds of the surface
+    t_hit = find_intersection(surface.shape, ray.origin, ray.direction, t_min, t_max)
+    if t_hit != nothing
+        # println("so I hitted something at t=", t_hit)
+        p_hit = ray.origin + t_hit * ray.direction # in the surface frame
+        # check whether the hit point is within the surface bounds
+        xbounded = (surface.bounds[1][1] <= p_hit[1] <= surface.bounds[1][2])
+        ybounded = (surface.bounds[2][1] <= p_hit[2] <= surface.bounds[2][2])
+        bounded = xbounded && ybounded
         
-        # Display the plot
-        fig = PlotlyJS.plot(plottraces , layout);
-        PlotlyJS.display(fig)   
-        return NaN
+        if bounded
+            # further determin if the hit point is inside the border
+            bounded = surface.border(p_hit[1:2]) < 0
+            if bounded
+                # find the surface normal at the hit point
+                snormal = surface_normal(p_hit, surface)
+                # println("Hiting surface: ", surface)
+                # println("hit time at ", t_hit)
+                # println("hit point at ", p_hit)
+                # println("surface normal ", snormal)
+                # determine if the ray is aligned with the surface normal, i.e. going from inside to outside
+                aligned = dot(ray.direction, snormal) > 0
+
+                hitrecord = HitRecord(t_hit, p_hit, snormal, aligned)
+                # bring the p_hit and snormal back to the original ray frame
+                hitrecord.p = transform_point_from(p_hit, surface.frame)
+                hitrecord.normal = transform_direction_from(snormal, surface.frame)
+            end
+        end
+    end
+    # transform ray back to the original frame
+    transform_ray_from!(ray, surface.frame)
+
+    # println("orignial ray:", ray_original)
+    # println("ray after hitting:", ray)
+    return hitrecord
+end
+
+function hit(object::Object, ray::Ray; t_min=1e-6, t_max=1e6)::Union{HitRecord, Nothing}
+    hitrecord = nothing
+    hitrecord_surface = nothing
+    t_hit = t_max
+    # transform ray to the object frame
+    transform_ray_to!(ray, object.frame)
+    for surface in object.surfaces
+        hitrecord_surface = hit(surface, ray;t_min=t_min, t_max=t_max)
+        if hitrecord_surface != nothing
+            if hitrecord_surface.t < t_hit
+                t_hit = hitrecord_surface.t
+                hitrecord = hitrecord_surface
+            end
+        end
+    end
+    if hitrecord != nothing
+        # transform hit point and surface normal back to the original frame
+        hitrecord.p = transform_point_from(hitrecord.p, object.frame)
+        hitrecord.normal = transform_direction_from(hitrecord.normal, object.frame)
+        hitrecord.material = object.material
+    end
+    # transform ray back to the original frame
+    transform_ray_from!(ray, object.frame)
+    return hitrecord
+end
+
+function scatter(ray_in::Ray, p_hit::Vector{Float64}, snormal::Vector{Float64}, material::Dielectric)::Vector{Ray}
+    # the normal is pointing from material to the outside
+    aligned = dot(ray_in.direction, snormal) > 0
+    # println("aligned?: ", aligned)
+    n1 = aligned ? material.n : 1.0
+    n2 = aligned ? 1.0 : material.n
+    atten = aligned ? exp(-material.α*norm(p_hit-ray_in.origin)) : 1.0
+    ray_in.amplitude = ray_in.amplitude*atten
+    bigt, refracted, bigr, reflected = fresnel(-snormal, ray_in.direction, n1, n2)
+
+    return [Ray(p_hit, refracted;amplitude=ray_in.amplitude*sqrt(bigt)), 
+            Ray(p_hit, reflected;amplitude=ray_in.amplitude*sqrt(bigr))]
+end
+
+
+function scatter(ray_in::Ray, p_hit::Vector{Float64}, snormal::Vector{Float64}, material1::Dielectric, material2::Dielectric)::Vector{Ray}
+    # the ray is hitting at a boundary between two objects
+    # the normal is pointing from material1 to material2
+    aligned = dot(ray_in.direction, snormal) > 0
+    
+    n1 = aligned ? material1.n : material2.n
+    n2 = aligned ? material2.n : material1.n
+
+    # println("Hi I hit the boundary of two objects")
+    # println("Is it going from n1 to n2?", aligned)
+    # println("n1 = $(n1), n2 = $(n2)")
+    atten = aligned ? exp(-material1.α*norm(p_hit-ray_in.origin)) : exp(-material2.α*norm(p_hit-ray_in.origin))
+    ray_in.amplitude = ray_in.amplitude*atten
+    bigt, refracted, bigr, reflected = fresnel(-snormal, ray_in.direction, n1, n2)
+
+    return [Ray(p_hit, refracted;amplitude=ray_in.amplitude*sqrt(bigt)), 
+            Ray(p_hit, reflected;amplitude=ray_in.amplitude*sqrt(bigr))]
+end
+
+DELTA_T = 1E-9 # to count for the floating point error, which should be determined by the wavelength 
+
+function propagate_ray!(objects::Vector{BoundObject}, ray::Ray, hitrecord_shortest::Vector{Union{Nothing, HitRecord}}, tjnode::TrajectoryNode, depth::Int64=0; 
+                        t_min::Float64=1e-6, t_max::Float64=1e6, amp_terminate=1e-6, depth_max::Int64=100)
+    # WARNING: t_min should not be 0 otherwise the ray always hits the same surface!
+    # to determine which object the ray hits first --------------------------------
+    t_hit_shortest = t_max
+    
+    # intialize hitrecord_shortest
+    for jj in 1:1:length(hitrecord_shortest)
+        hitrecord_shortest[jj] = nothing
+    end
+    # println(hitrecord_shortest)
+    # ray_original = deepcopy(ray) 
+    for object in objects
+        hitrecord = hit(object, ray; t_min=t_min, t_max=t_max)
+        if hitrecord != nothing
+            if hitrecord.t < t_hit_shortest 
+                t_hit_shortest = hitrecord.t
+                hitrecord_shortest[1] = hitrecord
+            elseif abs(hitrecord.t-t_hit_shortest) < DELTA_T # TODO the determined float might be slightly different by root finding
+                # the ray might hit the same place but with a different object
+                hitrecord_shortest[2] = hitrecord
+            end
+        end
+    end
+    # to determine which object the ray hits first --------------------------------
+    if hitrecord_shortest[1] == nothing
+        # the ray doesn't hit any shit
+        return depth
+    end
+    # println("the ray hit at t=", hitrecord_shortest[1].t)
+    rays_out = Ray[]
+    if hitrecord_shortest[2] == nothing
+        # only hit one object for sure
+        # rays_out = scatter(ray, hitrecord_shortest[1])
+        rays_out = scatter(ray, hitrecord_shortest[1].p, hitrecord_shortest[1].normal, hitrecord_shortest[1].material)
+        # println("rays out = ", rays_out)
     else
-        return plottraces
+        # might hit a boundary between two objects
+        if abs(hitrecord_shortest[1].t-hitrecord_shortest[2].t) > DELTA_T
+            # only hit one object at the closest, the overlapping boudary is not the closest
+            # rays_out = scatter(ray, hitrecord_shortest[1])
+            rays_out = scatter(ray, hitrecord_shortest[1].p, hitrecord_shortest[1].normal, hitrecord_shortest[1].material)
+        else
+            # hit the boundary of two objects at the closest
+            # rays_out = scatter(ray, hitrecord_shortest[1], hitrecord_shortest[2])
+            rays_out = scatter(ray, hitrecord_shortest[1].p, hitrecord_shortest[1].normal, hitrecord_shortest[1].material, hitrecord_shortest[2].material)
+        end
     end
-end
-# ================================================================================================================
-
-# how the rays interact with the objects and surfaces=============================================================================
-
-
-
-# ================================================================================================================
-
-# =============================================================================================================
-# ==============================================================================================================
-
-
-if abspath(@__FILE__) == abspath(PROGRAM_FILE)
-    focal_length = 2.0  # Focal length of the paraboloid
-    hem_radius = 4.0  # Radius of the hemispherical boundary
-    bound_radius = 4.5
-    x_range = (-5.0, 5.0)  # X range
-    y_range = (-5.0, 5.0)  # Y range
-    nx = 50 # number of points along x
-    ny = 50 # number of points along y
-    num_sn = 100 # number of surface normals
-    identity_matrix = rotation_matrix([0.0, 0.0, 1.0], 0.0) 
-    rotx_matrix = rotation_matrix([1.0, 0.0, 0.0], π/4.0) 
-    roty45_matrix = rotation_matrix([0.0, 1.0, 0.0], -π/4.0) 
-    flip_matrix = rotation_matrix([1.0, 0.0, 0.0], π*1.0) 
     
-    labframe = Frame([0.0,10.0,0.0], identity_matrix)
-    objframe = Frame([10.0,0.0,0.0], rotx_matrix)
-    objframe2 = Frame([0.0,-5.0,0.0], roty45_matrix)
-    objframe3 = Frame([0.0,-5.0,0.0], flip_matrix)
-    bounds = [x_range, y_range]
-    
-    parasurface = ImplicitSurface(
-        labframe, 
-        shape_paraboloid([0.0, 0.0, 0.0], focal_length), 
-        bounds,
-        border_circle(bound_radius))
-    
-        
-    parasurface = ImplicitSurface(
-        labframe, 
-        shape_paraboloid([0.0, 0.0, 0.0], focal_length), 
-        bounds,
-        border_circle(bound_radius))
-        
-    hemisurface = ImplicitSurface(
-        objframe, 
-        # shape_paraboloid([0.0, 0.0, 0.0], focal_length), 
-        shape_hemisphere([0.0, 0.0, 0.0], hem_radius), 
-        bounds,
-        border_circle(bound_radius))
-    
-    coneflatsurface = ImplicitSurface(
-        objframe2,
-        shape_coneflat([0.0, 0.0, -5.0], 4.0, 2.0, π/180*30),
-        bounds,
-        border_bounds()
-        # border_circle([0.0, 0.0], bound_radius)
-        )
-    
-    flatsurfarce1 = ImplicitSurface(
-        objframe2, 
-        # objframe,
-        shape_plane([0.0, 0.0, 5.0]),
-        bounds,
-        border_bounds()
-        # border_circle([0.0, 0.0], bound_radius)
-        )
-    
-    mhatsurface = ImplicitSurface(
-        objframe3, 
-        shape_mexican_hat([0.0, 0.0, 10.0], 4.0, 1.0, 1.0),
-        bounds,
-        border_bounds())
-    
-    
-    plottraces = vcat(
-        draw_surface(parasurface, nx, ny),
-        draw_snormals(parasurface, num_sn),
-        draw_surface(hemisurface, nx, ny),
-        draw_snormals(hemisurface, num_sn),
-        draw_surface(coneflatsurface, nx, ny),
-        draw_snormals(coneflatsurface, num_sn),
-        draw_surface(flatsurfarce1, nx, ny),
-        draw_snormals(flatsurfarce1, num_sn),
-        draw_surface(mhatsurface, nx, ny),
-        draw_snormals(mhatsurface, num_sn)
-    )
-    
-    
-    layout = Layout(
-        title="Surface Plot",
-        width=800,   # Set width in pixels
-        height=600,  # Set height in pixels
-        scene=attr(
-            xaxis=attr(visible=false, showgrid=false, zeroline=false),
-            yaxis=attr(visible=false, showgrid=false, zeroline=false),
-            zaxis=attr(visible=false, showgrid=false, zeroline=false),
-            bgcolor="rgba(0,0,0,0)",  # Transparent background
-            aspectmode="data"
-        ),
-        paper_bgcolor="rgba(0,0,0,0)",  # Transparent outer background
-        showlegend=false
-    )
-    
-    # Display the plot
-    fig = plot(plottraces , layout);
-    display(fig)
+    for ray_new in rays_out
+        # println("ray_new = ", ray_new)
+        node_new = TrajectoryNode(ray_new, [])
+        push!(tjnode.children, node_new)
+        if (ray_new.amplitude > amp_terminate) && (depth < depth_max)
+            propagate_ray!(objects, ray_new, hitrecord_shortest, node_new, depth + 1; amp_terminate=amp_terminate)
+            # otherwise ray is terminated
+        end
+    end
+    return depth + 1
 end
