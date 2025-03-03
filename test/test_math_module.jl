@@ -160,15 +160,15 @@ end
 
     # Test 1: Creating a Frame with zero rotation and origin at [0, 0, 0]
     origin = [0.0, 0.0, 0.0]
-    orientation = I(3)  # Identity matrix (no rotation)
+    orientation = Matrix{Float64}(I(3))  # Identity matrix (no rotation)
     frame = Frame(origin, orientation)
     
     @test frame.origin == origin
-    @test isapprox(frame.orientation, I(3), atol=1e-6)
+    @test isapprox(frame.orientation, Matrix{Float64}(I(3)), atol=1e-6)
 
     # Test 2: Rotating a point with no rotation (Identity frame)
     point_obj = [1.0, 0.0, 0.0]
-    frame_no_rotation = Frame([0.0, 0.0, 0.0], I(3))  # No rotation
+    frame_no_rotation = Frame([0.0, 0.0, 0.0], Matrix{Float64}(I(3)))  # No rotation
     point_lab = frame_no_rotation.orientation * point_obj
     
     @test isapprox(point_lab, point_obj, atol=1e-6)
@@ -187,7 +187,7 @@ end
     @test isapprox(point_lab, expected_point_lab, atol=1e-6)
 
     # Test 4: Frame with translation (origin at [1, 1, 1])
-    frame_with_translation = Frame([1.0, 1.0, 1.0], I(3))  # Identity rotation, just translation
+    frame_with_translation = Frame([1.0, 1.0, 1.0], Matrix{Float64}(I(3)))  # Identity rotation, just translation
     point_obj = [1.0, 0.0, 0.0]  # Point in object frame
     expected_point_lab = [2.0, 1.0, 1.0]  # Point translated by [1, 1, 1]
     
@@ -195,4 +195,39 @@ end
     
     @test isapprox(point_lab, expected_point_lab, atol=1e-6)
 
+end
+
+
+@testset "Ray-Surface Interaction Tests" begin
+    # Test 1: Surface normal (implicit surface: sphere)
+    surface_function(p) = p⋅p - 1.0  # A unit sphere
+    normal = surface_normal([1.0, 0.0, 0.0], surface_function)
+    @test isapprox(normal, [1.0, 0.0, 0.0], atol=1e-6)
+
+    # Test 2: Ray intersection with sphere
+    o = [0.0, 0.0, 3.0]  # Origin above the sphere
+    d = [0.0, 0.0, -1.0]  # Direction towards the sphere
+    intersection_t = find_intersection(surface_function, o, d)
+    @test isapprox(intersection_t, 2.0, atol=1e-6)  # Expected intersection at t = 2
+
+    # Test 3: Reflection of a ray
+    normal = [0.0, 1.0, 0.0]
+    incident = normalize([1.0, -2.0, 0.0])
+    reflected_ray = reflect(normal, incident)
+    @test isapprox(reflected_ray, [0.4472135954999579, 0.8944271909999159, 0.0], atol=1e-6)
+
+    # Test 4: Refraction (assuming n1 = 1.5, n2 = 1.0)
+    refracted_ray = refract(normal, incident, 1.5, 1.0)
+    @test isapprox(refracted_ray, [0.6708203932499369, -0.7416198487095662, 0.0], atol=1e-6)
+
+    # Test 5: Fresnel reflectance (assuming n1 = 1.5, n2 = 1.0)
+    reflectance_value = fresnel(normal, incident, 1.5, 1.0)
+    @test isapprox(reflectance_value[1], 0.952622096319283, atol=1e-6)  # Approximate Fresnel transmittance at this angle
+    @test isapprox(reflectance_value[2], refracted_ray, atol=1e-6)  # Approximate Fresnel refracted ray at this angle
+    @test isapprox(reflectance_value[3], 0.04737790368071705, atol=1e-6)  # Approximate Fresnel reflectance at this angle
+    @test isapprox(reflectance_value[4], reflected_ray, atol=1e-6)  # Approximate Fresnel reflected ray at this angle
+
+    # Test 6: Schlick's approximation for reflectance
+    r_schlick_value = rSchlick2(normal, incident, 1.5, 1.0)
+    @test isapprox(r_schlick_value, 0.04, atol=1e-2)  # Schlick's approximation
 end

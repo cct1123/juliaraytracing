@@ -1,3 +1,6 @@
+module IlllustrationModule # module begin ============
+ 
+
 using PlotlyJS
 
 LAYOUT_DEFAULT = PlotlyJS.Layout(
@@ -340,3 +343,5 @@ function draw_trajectory(trajectory::Trajectory; color="rgba(255, 255, 0, 1)", s
         return traces
     end
 end
+   
+end # module end ============

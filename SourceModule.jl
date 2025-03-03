@@ -30,6 +30,19 @@ mutable struct Ray
     end
 end
 
+function transform_ray_to!(ray::Ray, frame::Frame)
+    rotrot = transpose(frame.orientation)
+    ray.origin = rotrot*(ray.origin - frame.origin)
+    ray.direction = rotrot * ray.direction
+end
+
+function transform_ray_from!(ray::Ray, frame::Frame)
+    rotrot = frame.orientation
+    ray.origin = rotrot*ray.origin + frame.origin
+    ray.direction = rotrot * ray.direction
+end
+
+
 function emit_ray(source::Source)::Ray
     direction = source.distribution()
     return Ray(source.center, direction)

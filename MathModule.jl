@@ -2,15 +2,17 @@
 module MathModule # module begin--------------------------
 
 using LinearAlgebra
+using ForwardDiff
+using Roots
 const Vec3 = Vector{Float64};
 const Vec2 = Vector{Float64};
 const Point = Vec3;
 const Direction = Vec3;
 const invalid_vector =[NaN, NaN, NaN]
 
-struct  Frame 
-    origin:: Point
-    orientation:: Matrix{Float64} # a 3x3 rotation matrix that transform the lab frame to the object frame
+struct Frame
+    origin::Point
+    orientation::Matrix{Float64}  # a 3x3 rotation matrix that transforms the lab frame to the object frame
     function Frame(origin::Point=[0.0, 0.0, 0.0], orientation::Matrix{Float64}=[1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
         new(origin, orientation)
     end
@@ -56,18 +58,13 @@ end
 
 
 # how the rays interact with the objects and surfaces=============================================================================
-function transform_ray_to!(ray::Ray, frame::Frame)
-    rotrot = transpose(frame.orientation)
-    ray.origin = rotrot*(ray.origin - frame.origin)
-    ray.direction = rotrot * ray.direction
+function surface_normal(p, surface_shape::Function)
+    # Calculate the gradient of the surface shape function
+    grad_S = ForwardDiff.gradient(surface_shape, p)
+    
+    # Normalize the gradient to get the normal
+    return grad_S ./ norm(grad_S)
 end
-
-function transform_ray_from!(ray::Ray, frame::Frame)
-    rotrot = frame.orientation
-    ray.origin = rotrot*ray.origin + frame.origin
-    ray.direction = rotrot * ray.direction
-end
-
 
 function transform_direction_to(vec::Vector{Float64}, frame::Frame)
     return transpose(frame.orientation * vec)
@@ -192,18 +189,21 @@ function find_intersection(f::Function, o::Point, d::Vector{Float64}, t_min=1e-6
     # Search for a root in the range [t_min, t_max]
     try
         roots = find_zeros(t -> f(o + t * d), t_min, t_max)
-
         # Find the smallest root
         t_intersect = minimum(roots)
 
         # t_intersect = find_zero((t) -> f(o + t * d), (t_min, t_max), Roots.AlefeldPotraShi())  # Robust root-finding
         return t_intersect > 0 ? t_intersect : nothing  # Ensure positive intersection
     catch
-        return nothing  # No valid root found
+    #     return nothing  # No valid root found
     end
 end
 
-export Point, Direction, Vec3, Vec2, Frame, rotation_matrix, rotate
+export Point, Direction, Vec3, Vec2, Frame, rotation_matrix, rotate, 
+       transform_direction_to, transform_direction_from, 
+       transform_point_to, transform_point_from, 
+       surface_normal, reflect, refract, reflectance, fresnel, rSchlick2, 
+       find_intersection
 
 end # module end-------------------------------
 
