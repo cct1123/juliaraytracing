@@ -1,10 +1,12 @@
 using Test
 using LinearAlgebra
 
+
 include("../MathModule.jl")  
+using .MathModule  
+
 include("../SourceModule.jl")
-using Main.MathModule  # Explicitly use MathModule to bring in Frame
-using Main.SourceModule
+using .SourceModule
 
 # Test isotropic distribution
 @testset "Isotropic Distribution" begin

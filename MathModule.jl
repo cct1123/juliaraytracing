@@ -2,7 +2,7 @@
 module MathModule # module begin--------------------------
 
 using LinearAlgebra
-using ForwardDiff
+# using ForwardDiff
 using Roots
 const Vec3 = Vector{Float64};
 const Vec2 = Vector{Float64};
@@ -56,15 +56,23 @@ function rotate(v::Vector{Float64}, k::Vector{Float64}, theta::Float64)::Vector{
     return v_rotated
 end
 
+const rm_eye = rotation_matrix([0.0, 0.0, 1.0], 0.0) 
+const rm_xflip = rotation_matrix([1.0, 0.0, 0.0], 1.0*π)
+const rm_xp90 = rotation_matrix([1.0, 0.0, 0.0], 0.5*π)
+const rm_xn90 = rotation_matrix([1.0, 0.0, 0.0], -0.5*π)
+
+const rm_yflip = rotation_matrix([0.0, 1.0, 0.0], 1.0*π)
+const rm_yp90 = rotation_matrix([0.0, 1.0, 0.0], 0.5*π)
+const rm_yn90 = rotation_matrix([0.0, 1.0, 0.0], -0.5*π)
 
 # how the rays interact with the objects and surfaces=============================================================================
-function surface_normal(p, surface_shape::Function)
-    # Calculate the gradient of the surface shape function
-    grad_S = ForwardDiff.gradient(surface_shape, p)
+# function surface_normal(p, surface_shape::Function)
+#     # Calculate the gradient of the surface shape function
+#     grad_S = ForwardDiff.gradient(surface_shape, p)
     
-    # Normalize the gradient to get the normal
-    return grad_S ./ norm(grad_S)
-end
+#     # Normalize the gradient to get the normal
+#     return grad_S ./ norm(grad_S)
+# end
 
 function transform_direction_to(vec::Vector{Float64}, frame::Frame)
     return transpose(frame.orientation * vec)
@@ -200,9 +208,11 @@ function find_intersection(f::Function, o::Point, d::Vector{Float64}, t_min=1e-6
 end
 
 export Point, Direction, Vec3, Vec2, Frame, rotation_matrix, rotate, 
+       rm_eye, rm_xflip, rm_xp90, rm_xn90, rm_yflip, rm_yp90, rm_yn90,
        transform_direction_to, transform_direction_from, 
        transform_point_to, transform_point_from, 
-       surface_normal, reflect, refract, reflectance, fresnel, rSchlick2, 
+    #    surface_normal, 
+    reflect, refract, reflectance, fresnel, rSchlick2, 
        find_intersection
 
 end # module end-------------------------------

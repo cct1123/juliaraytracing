@@ -1,8 +1,18 @@
 module SourceModule # module begin
 using LinearAlgebra
-using Main.MathModule
+if abspath(PROGRAM_FILE) == @__FILE__
+    println("ONLY for DEVELPMENT: Script $(@__FILE__) is running directly!")
+    include("./MathModule.jl")  # Include only if necessary
+    using .MathModule
+    
+    # Do something here
+else
+    # include("./MathModule.jl")  # Include only if necessary
+    using Main.MathModule
+end
+
 # Define the structure for light sources ===============================================================================
-# include("./MathModule.jl")  # Include only if necessary
+
 
 
 abstract type Source end
@@ -104,6 +114,7 @@ function dipole_distribution(dipole_moment::Direction)
 end
 
 
-export Source, PointSource, EnsembleSource, isotropic_distribution, collimated_distribution, cone_distribution, dipole_distribution
+export Source, PointSource, EnsembleSource, isotropic_distribution, collimated_distribution, cone_distribution, dipole_distribution, 
+    Ray, emit_ray, emit_rays, transform_ray_to!, transform_ray_from!
 
 end # module end

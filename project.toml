@@ -1,0 +1,7 @@
+name = "RayTracing"
+uuid = "dfe767e0-445f-4227-b6ed-c59811519133"  # Generate a UUID
+authors = ["ChunTung Cheung <ctcheung1123@gmail.com>"]
+version = "0.0.0"
+
+[deps]
+PlotlyJS = "..., "  # Add dependencies

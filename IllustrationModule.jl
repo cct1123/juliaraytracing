@@ -1,5 +1,23 @@
-module IlllustrationModule # module begin ============
- 
+module IllustrationModule # module begin ============
+using LinearAlgebra
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    println("ONLY for DEVELPMENT: Script $(@__FILE__) is running directly!")
+    include("./MathModule.jl")  # Include only if necessary
+    using .MathModule
+    include("./GeometryModule.jl")
+    using .GeometryModule
+    include("./SourceModule.jl")
+    using .SourceModule
+    include("./DetectorModule.jl")
+    using .DetectorModule
+else
+    # include("./MathModule.jl")  # Include only if necessary
+    using Main.MathModule
+    using Main.GeometryModule
+    using Main.SourceModule
+    using Main.DetectorModule
+end
 
 using PlotlyJS
 
@@ -55,7 +73,7 @@ function draw_rays(rays::Vector{Ray}, ray_length::Float64=0.5, arrow_scale::Floa
     return traces
 end
 
-function draw_surface(surface:: Surface, nx::Int=100, ny::Int=100, color="random", display::Bool=false)
+function draw_surface(surface:: Surface, nx::Int=100, ny::Int=100; color="random", display::Bool=false)
     # plot the surface
     xarray = range(surface.bounds[1][1], stop=surface.bounds[1][2], length=nx)
     yarray = range(surface.bounds[2][1], stop=surface.bounds[2][2], length=ny)
@@ -100,80 +118,9 @@ function draw_surface(surface:: Surface, nx::Int=100, ny::Int=100, color="random
     return [surface_data]
 end
 
-
-function draw_surface_adaptive(surface::Surface; base_density=50, refinement_factor=3, color="random", display::Bool=false)
-    x_range = surface.bounds[1]
-    y_range = surface.bounds[2]
-
-    # Initial coarse sampling
-    x_coarse = range(x_range[1], stop=x_range[2], length=base_density)
-    y_coarse = range(y_range[1], stop=y_range[2], length=base_density)
-
-    x_points = Float64[]
-    y_points = Float64[]
-
-    for i in 1:length(x_coarse)-1
-        for j in 1:length(y_coarse)-1
-            x1, x2 = x_coarse[i], x_coarse[i+1]
-            y1, y2 = y_coarse[j], y_coarse[j+1]
-
-            z1 = surface.shape([x1, y1, 0.0])
-            z2 = surface.shape([x2, y2, 0.0])
-
-            dz = abs(z2 - z1)  # Height difference (morphology change)
-
-            # More points where dz is large
-            num_subdivisions = max(2, round(Int, dz * refinement_factor))
-            x_sub = range(x1, stop=x2, length=num_subdivisions)
-            y_sub = range(y1, stop=y2, length=num_subdivisions)
-
-            append!(x_points, x_sub)
-            append!(y_points, y_sub)
-        end
-    end
-
-    xmesh = zeros(length(x_points))
-    ymesh = zeros(length(y_points))
-    zmesh = zeros(length(x_points))
-
-    for i in 1:length(x_points)
-        xval, yval = x_points[i], y_points[i]
-        bounded = surface.border([xval, yval]) < 0
-        zval = bounded ? -surface.shape([xval, yval, 0.0]) : NaN
-
-        xval, yval, zval = surface.frame.orientation * [xval, yval, zval]
-        xmesh[i] = xval + surface.frame.origin[1]
-        ymesh[i] = yval + surface.frame.origin[2]
-        zmesh[i] = zval + surface.frame.origin[3]
-    end
-
-    # Generate random color
-    if color == "random"
-        color = string("rgb(", round(255 * rand()), ",", round(255 * rand()), ",", round(255 * rand()), ")")
-    end
-
-    surface_data = PlotlyJS.scatter3d(
-        x=xmesh, y=ymesh, z=zmesh,
-        mode="markers",
-        marker=Dict(:size => 2, :color => color, :opacity => 0.8)
-    )
-
-    if display
-        layout = LAYOUT_DEFAULT
-        fig = plot([surface_data], layout)
-        display(fig)
-        return NaN
-    end
-    return [surface_data]
-end
-
-
-function draw_snormals(surface:: Surface, num:: Int,  ray_length::Float64=0.5, arrow_scale::Float64=0.3, color="random")
-    xarray = range(surface.bounds[1][1], stop=surface.bounds[1][2], length=nx)
-    yarray = range(surface.bounds[2][1], stop=surface.bounds[2][2], length=ny)
-
+function draw_snormals(surface:: Surface, num:: Int; ray_length::Float64=0.5, arrow_scale::Float64=0.3, color="random")
     rays_snorm = Ray[]
-    for ii in 1:1:num
+    for _ii in 1:1:num
         bounded = false
         while ~bounded
             xx = rand(surface.bounds[1][1]:surface.bounds[1][2])
@@ -189,13 +136,13 @@ function draw_snormals(surface:: Surface, num:: Int,  ray_length::Float64=0.5, a
     return draw_rays(rays_snorm, ray_length, arrow_scale, color)
 end
 
-function draw_object(
-    obj::Object, 
+function draw_volume(
+    obj::Volume, 
     num_sx::Int, 
     num_sy::Int, 
     num_sn::Int,
     ;
-    drawnormals::Bool=true, 
+    # drawnormals::Bool=true, 
     arrow_scale::Float64=1.0,
     color_sf::String="random", 
     color_sn::String="random",
@@ -216,8 +163,8 @@ function draw_object(
         ) # only work ImplicitSurface for now TODO: generalize it
 
         append!(plottraces, vcat(
-            draw_surface(ss_tolab, num_sx, num_sy, color_sf), 
-            draw_snormals(ss_tolab, num_sn, 0.5*arrsize, 0.3*arrsize, color_sn)
+            draw_surface(ss_tolab, num_sx, num_sy;color=color_sf), 
+            draw_snormals(ss_tolab, num_sn, ; ray_length=0.5*arrsize, arrow_scale=0.3*arrsize, color=color_sn)
             )) 
     end
 
@@ -344,4 +291,6 @@ function draw_trajectory(trajectory::Trajectory; color="rgba(255, 255, 0, 1)", s
     end
 end
    
+
+export LAYOUT_DEFAULT, draw_rays, draw_surface, draw_volume, draw_snormals, draw_trajectory
 end # module end ============

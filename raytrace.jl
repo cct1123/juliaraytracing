@@ -1,3 +1,27 @@
+module RayTrace # module begin ----------------------------
+if abspath(PROGRAM_FILE) == @__FILE__
+    println("ONLY for DEVELPMENT: Script $(@__FILE__) is running directly!")
+    include("./MathModule.jl")  # Include only if necessary
+    using .MathModule
+    include("./GeometryModule.jl")
+    using .GeometryModule
+    include("./MaterialModule.jl")
+    using .MaterialModule
+    include("./SourceModule.jl")
+    using .SourceModule
+    include("./ObjectModule.jl")
+    using .ObjectModule
+    include("./DetectorModule.jl")
+    using .DetectorModule
+else
+    using Main.MathModule
+    using Main.GeometryModule
+    using Main.MaterialModule
+    using Main.SourceModule
+    using Main.ObjectModule
+    using Main.DetectorModule
+end
+
 mutable struct Setup
     sources:: Vector{Source}
     objects:: Vector{Object}
@@ -36,7 +60,7 @@ function hit(surface::Surface, ray::Ray; t_min::Float64=1e-6, t_max::Float64=1e6
     # println("trying to hit a surface")
     # TODO: before searching for root, estimate the hit time and hit point first using the frame and bounds of the surface
     t_hit = find_intersection(surface.shape, ray.origin, ray.direction, t_min, t_max)
-    if t_hit != nothing
+    if t_hit !== nothing
         # println("so I hitted something at t=", t_hit)
         p_hit = ray.origin + t_hit * ray.direction # in the surface frame
         # check whether the hit point is within the surface bounds
@@ -72,29 +96,36 @@ function hit(surface::Surface, ray::Ray; t_min::Float64=1e-6, t_max::Float64=1e6
     return hitrecord
 end
 
-function hit(object::Object, ray::Ray; t_min=1e-6, t_max=1e6)::Union{HitRecord, Nothing}
+function hit(volume::Volume, ray::Ray; t_min=1e-6, t_max=1e6)::Union{HitRecord, Nothing}
     hitrecord = nothing
     hitrecord_surface = nothing
     t_hit = t_max
     # transform ray to the object frame
     transform_ray_to!(ray, object.frame)
-    for surface in object.surfaces
+    for surface in volume.surfaces
         hitrecord_surface = hit(surface, ray;t_min=t_min, t_max=t_max)
-        if hitrecord_surface != nothing
+        if hitrecord_surface !== nothing
             if hitrecord_surface.t < t_hit
                 t_hit = hitrecord_surface.t
                 hitrecord = hitrecord_surface
             end
         end
     end
-    if hitrecord != nothing
+    if hitrecord !== nothing
         # transform hit point and surface normal back to the original frame
-        hitrecord.p = transform_point_from(hitrecord.p, object.frame)
-        hitrecord.normal = transform_direction_from(hitrecord.normal, object.frame)
-        hitrecord.material = object.material
+        hitrecord.p = transform_point_from(hitrecord.p, volume.frame)
+        hitrecord.normal = transform_direction_from(hitrecord.normal, volume.frame)
     end
     # transform ray back to the original frame
-    transform_ray_from!(ray, object.frame)
+    transform_ray_from!(ray, volume.frame)
+    return hitrecord
+end
+
+function hit(object::Object, ray::Ray; t_min=1e-6, t_max=1e6)::Union{HitRecord, Nothing}
+    hitrecord = hit(object.volume, ray; t_min=t_min, t_max=t_max)
+    if hitrecord !== nothing
+        hitrecord.material = object.material
+    end
     return hitrecord
 end
 
@@ -111,7 +142,6 @@ function scatter(ray_in::Ray, p_hit::Vector{Float64}, snormal::Vector{Float64}, 
     return [Ray(p_hit, refracted;amplitude=ray_in.amplitude*sqrt(bigt)), 
             Ray(p_hit, reflected;amplitude=ray_in.amplitude*sqrt(bigr))]
 end
-
 
 function scatter(ray_in::Ray, p_hit::Vector{Float64}, snormal::Vector{Float64}, material1::Dielectric, material2::Dielectric)::Vector{Ray}
     # the ray is hitting at a boundary between two objects
@@ -134,7 +164,7 @@ end
 
 DELTA_T = 1E-9 # to count for the floating point error, which should be determined by the wavelength 
 
-function propagate_ray!(objects::Vector{BoundObject}, ray::Ray, hitrecord_shortest::Vector{Union{Nothing, HitRecord}}, tjnode::TrajectoryNode, depth::Int64=0; 
+function propagate_ray!(objects::Vector{Object}, ray::Ray, hitrecord_shortest::Vector{Union{Nothing, HitRecord}}, tjnode::TrajectoryNode, depth::Int64=0; 
                         t_min::Float64=1e-6, t_max::Float64=1e6, amp_terminate=1e-6, depth_max::Int64=100)
     # WARNING: t_min should not be 0 otherwise the ray always hits the same surface!
     # to determine which object the ray hits first --------------------------------
@@ -148,7 +178,7 @@ function propagate_ray!(objects::Vector{BoundObject}, ray::Ray, hitrecord_shorte
     # ray_original = deepcopy(ray) 
     for object in objects
         hitrecord = hit(object, ray; t_min=t_min, t_max=t_max)
-        if hitrecord != nothing
+        if hitrecord !== nothing
             if hitrecord.t < t_hit_shortest 
                 t_hit_shortest = hitrecord.t
                 hitrecord_shortest[1] = hitrecord
@@ -159,13 +189,13 @@ function propagate_ray!(objects::Vector{BoundObject}, ray::Ray, hitrecord_shorte
         end
     end
     # to determine which object the ray hits first --------------------------------
-    if hitrecord_shortest[1] == nothing
+    if hitrecord_shortest[1] === nothing
         # the ray doesn't hit any shit
         return depth
     end
     # println("the ray hit at t=", hitrecord_shortest[1].t)
     rays_out = Ray[]
-    if hitrecord_shortest[2] == nothing
+    if hitrecord_shortest[2] === nothing
         # only hit one object for sure
         # rays_out = scatter(ray, hitrecord_shortest[1])
         rays_out = scatter(ray, hitrecord_shortest[1].p, hitrecord_shortest[1].normal, hitrecord_shortest[1].material)
@@ -194,3 +224,41 @@ function propagate_ray!(objects::Vector{BoundObject}, ray::Ray, hitrecord_shorte
     end
     return depth + 1
 end
+
+
+function detect(detector::TrajectoryRecorder, trajectory::Trajectory)
+    push!(detector.trajectories, trajectory)
+end
+
+function detect(detector::Camera, trajectory::Trajectory)
+    leafnodes = find_leaf_nodes(trajectory)
+    for leafnode in leafnodes
+        ray = leafnode.ray
+        hitrecord = hit(detector.geometry, ray)
+        if hitrecord !== nothing
+            x, y, z =hitrecord.p
+            @assert z ≈ 0.0
+            idx_pixel_x = x // detector.pixel_size[1] 
+            idx_pixel_y = y // detector.pixel_size[2]
+            reminder_x = x % detector.pixel_size[1]
+            reminder_y = y % detector.pixel_size[2]       
+            cosθ = dot(hitrecord.normal, ray.direction)
+            camera.pixels[idx_pixel_x+1, idx_pixel_y+1] += abs(ray.amplitude*cosθ)^2
+        end
+    end
+end
+
+function detect!(detector::Objective, trajectory::Trajectory)
+    leafnodes = find_leaf_nodes(trajectory)
+    for leafnode in leafnodes
+        ray = leafnode.ray
+        hitrecord = hit(detector.surface, ray)
+        if hitrecord !== nothing
+            if abs(dot(hitrecord.normal, ray.direction)) > detector.NA
+                obj.collection += abs(ray.amplitude)^2
+            end
+        end
+    end
+end
+
+end # module end ------------------------------------------------

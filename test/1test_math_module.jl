@@ -1,7 +1,8 @@
 using Test
+using LinearAlgebra
 include("../MathModule.jl")
 using .MathModule  # Replace with the actual path to your module
-using LinearAlgebra
+
 # Test case for the `rotation_matrix` function
 @testset "Rotation Matrix Tests" begin
     # Test 1: 90 degrees rotation around the Y-axis
