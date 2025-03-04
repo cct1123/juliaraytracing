@@ -163,6 +163,8 @@ function scatter(ray_in::Ray, p_hit::Vector{Float64}, snormal::Vector{Float64}, 
             Ray(p_hit, reflected;amplitude=ray_in.amplitude*sqrt(bigr))]
 end
 
+
+
 DELTA_T = 1E-9 # to count for the floating point error, which should be determined by the wavelength 
 
 function propagate_ray!(objects::Vector{Object}, ray::Ray, hitrecord_shortest::Vector{Union{Nothing, HitRecord}}, tjnode::TrajectoryNode, depth::Int64=0; 
@@ -221,17 +223,24 @@ function propagate_ray!(objects::Vector{Object}, ray::Ray, hitrecord_shortest::V
         if (ray_new.amplitude > amp_terminate) && (depth < depth_max)
             propagate_ray!(objects, ray_new, hitrecord_shortest, node_new, depth + 1; amp_terminate=amp_terminate)
             # otherwise ray is terminated
+        elseif depth >= depth_max
+            # kill the ray if the depth is over depth_max
+            ray_new.amplitude = 0.0
         end
     end
     return depth + 1
 end
 
 
-function detect(detector::TrajectoryRecorder, trajectory::Trajectory)
-    push!(detector.trajectories, trajectory)
+
+function detect!(detector::TrajectoryRecorder, trajectory::Trajectory)
+    detector.count += 1
+    if detector.count % detector.interval == 0
+        push!(detector.trajectories, trajectory)
+    end
 end
 
-function detect(detector::Camera, trajectory::Trajectory)
+function detect!(detector::Camera, trajectory::Trajectory)
     leafnodes = find_leaf_nodes(trajectory)
     for leafnode in leafnodes
         ray = leafnode.ray
@@ -245,6 +254,9 @@ function detect(detector::Camera, trajectory::Trajectory)
             reminder_y = y % detector.pixel_size[2]       
             cosθ = dot(hitrecord.normal, ray.direction)
             camera.pixels[idx_pixel_x+1, idx_pixel_y+1] += abs(ray.amplitude*cosθ)^2
+            ray_new = Ray(hitrecord.p, ray.direction; amplitude = 0.0)
+            node_new = TrajectoryNode(ray_new, [])
+            push!(leafnode.children, node_new)
         end
     end
 end
@@ -256,10 +268,15 @@ function detect!(detector::Objective, trajectory::Trajectory)
         hitrecord = hit(detector.surface, ray)
         if hitrecord !== nothing
             if abs(dot(hitrecord.normal, ray.direction)) > detector.NA
-                obj.collection += abs(ray.amplitude)^2
+                detector.collection += abs(ray.amplitude)^2
+                ray_new = Ray(hitrecord.p, ray.direction; amplitude = 0.0)
+                node_new = TrajectoryNode(ray_new, [])
+                push!(leafnode.children, node_new)
             end
+            
         end
     end
 end
-export Setup, HitRecord, hit, scatter, propagate_ray!, DELTA_T, detect
+
+export Setup, HitRecord, hit, scatter, propagate_ray!, DELTA_T, detect!
 end # module end ------------------------------------------------

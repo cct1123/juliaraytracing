@@ -402,7 +402,7 @@ end
 export ImplicitSurface, BoundVolume, Surface, Volume, 
        shape_plane, shape_sphere, shape_hemisphere, shape_paraboloid, shape_mexican_hat, shape_coneflat, surface_normal,
        border_circle, border_outcircle, border_bounds,
-       make_plane, make_box, make_cone, make_sphere,
+       make_plane, make_circleplane, make_box, make_cone, make_sphere,
        make_cylinder#, make_ring, make_hemisphere, make_spherical_lens
 
 end # module end----------------------

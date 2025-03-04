@@ -10,7 +10,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
 else
     # include("./MathModule.jl")  # Include only if necessary
     using Main.MathModule
-    using Main.GeometryModule: Volume, Surface, ImplicitSurface, make_celestial
+    using Main.GeometryModule: Volume, Surface, ImplicitSurface, make_celestial, make_circleplane
     using Main.SourceModule: Ray
 end
 
@@ -26,11 +26,19 @@ mutable struct Trajectory
     root::TrajectoryNode
 end
 
+
 abstract type Detector end
 
 mutable struct TrajectoryRecorder <: Detector
+    interval:: Int64 # record trajectory every interval
+    count::Int64
     trajectories:: Vector{Trajectory}
+    function TrajectoryRecorder(interval::Int64, count::Int64=0, trajectories::Vector{Trajectory}=Trajectory[])
+        new(interval, count, trajectories)
+    end
 end
+
+reset_trajectoryrecorder!(tr::TrajectoryRecorder) = tr.count = 0
 
 # mutable struct Counter <: Detector
 #     count:: Int64
@@ -70,7 +78,7 @@ function reset_pixels!(camera::Camera)
     camera.pixels = zeros(camera.pixel_number[1], camera.pixel_number[2])
 end
 
-struct Objective <: Detector
+mutable struct Objective <: Detector
     # a 2D areal detector with a border defined by a implicit line function
     frame:: Frame
     NA:: Float64 # numerical aperture
@@ -114,6 +122,8 @@ function add_child!(parent::TrajectoryNode, child::Ray)
     push!(parent.children, TrajectoryNode(child, []))
 end
 
+
+
 function find_leaf_nodes(node::TrajectoryNode, leaves::Vector{TrajectoryNode} = [])
     if isempty(node.children)
         push!(leaves, node)
@@ -122,15 +132,20 @@ function find_leaf_nodes(node::TrajectoryNode, leaves::Vector{TrajectoryNode} = 
             find_leaf_nodes(child, leaves)
         end
     end
+    # !! WARNING !! modifying the leaf_nodes vector will directly affect the trajectory 
+    #               because leaf_nodes contains references to the actual TrajectoryNode objects in the tree.
     return leaves
 end
 
 function find_leaf_nodes(trajectory::Trajectory)
     leaves = TrajectoryNode[]
     find_leaf_nodes(trajectory.root, leaves)
+    # !! WARNING !! modifying the leaf_nodes vector will directly affect the trajectory 
+    #               because leaf_nodes contains references to the actual TrajectoryNode objects in the tree.
     return leaves
 end
 
-export TrajectoryNode, Trajectory, Detector, TrajectoryRecorder, Counter, Camera, Objective, Celestial;
+export TrajectoryNode, Trajectory, Detector, TrajectoryRecorder, Counter, Camera, Objective, Celestial, 
+    find_leaf_nodes;
 
 end # module end ----------------------------
