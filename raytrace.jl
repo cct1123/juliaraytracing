@@ -1,4 +1,5 @@
 module RayTrace # module begin ----------------------------
+using LinearAlgebra
 if abspath(PROGRAM_FILE) == @__FILE__
     println("ONLY for DEVELPMENT: Script $(@__FILE__) is running directly!")
     include("./MathModule.jl")  # Include only if necessary
@@ -100,8 +101,8 @@ function hit(volume::Volume, ray::Ray; t_min=1e-6, t_max=1e6)::Union{HitRecord, 
     hitrecord = nothing
     hitrecord_surface = nothing
     t_hit = t_max
-    # transform ray to the object frame
-    transform_ray_to!(ray, object.frame)
+    # transform ray to the volume frame
+    transform_ray_to!(ray, volume.frame)
     for surface in volume.surfaces
         hitrecord_surface = hit(surface, ray;t_min=t_min, t_max=t_max)
         if hitrecord_surface !== nothing
@@ -122,7 +123,7 @@ function hit(volume::Volume, ray::Ray; t_min=1e-6, t_max=1e6)::Union{HitRecord, 
 end
 
 function hit(object::Object, ray::Ray; t_min=1e-6, t_max=1e6)::Union{HitRecord, Nothing}
-    hitrecord = hit(object.volume, ray; t_min=t_min, t_max=t_max)
+    hitrecord = hit(object.geometry, ray; t_min=t_min, t_max=t_max)
     if hitrecord !== nothing
         hitrecord.material = object.material
     end
@@ -260,5 +261,5 @@ function detect!(detector::Objective, trajectory::Trajectory)
         end
     end
 end
-
+export Setup, HitRecord, hit, scatter, propagate_ray!, DELTA_T, detect
 end # module end ------------------------------------------------

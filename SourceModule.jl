@@ -55,7 +55,8 @@ end
 
 function emit_ray(source::Source)::Ray
     direction = source.distribution()
-    return Ray(source.center, direction)
+    direction = transform_direction_from(direction, source.frame)
+    return Ray(source.frame.origin, direction)
 end
 
 function emit_rays(source::Source, num_rays::Int)::Vector{Ray}
