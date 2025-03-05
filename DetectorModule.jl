@@ -29,6 +29,12 @@ end
 
 abstract type Detector end
 
+function reset!(detectors::Vector{Detector})
+    for detector in detectors
+        reset!(detector)
+    end
+end
+
 mutable struct TrajectoryRecorder <: Detector
     interval:: Int64 # record trajectory every interval
     count::Int64
@@ -38,7 +44,9 @@ mutable struct TrajectoryRecorder <: Detector
     end
 end
 
-reset_trajectoryrecorder!(tr::TrajectoryRecorder) = tr.count = 0
+function reset!(tr::TrajectoryRecorder)
+    tr.count = 0
+end
 
 # mutable struct Counter <: Detector
 #     count:: Int64
@@ -69,12 +77,12 @@ end
 function make_sCMOS(
     center::Vec3=[0.0, 0.0, 0.0],
     orientation::Matrix{Float64}=rm_eye
-)
+    )
     # ref https://www.thorlabs.com/newgrouppage9.cfm?objectgroup_id=11421
     return Camera(Frame(center, orientation), (1920, 1080), (5.04, 5.04))
 end
 
-function reset_pixels!(camera::Camera)
+function reset!(camera::Camera)
     camera.pixels = zeros(camera.pixel_number[1], camera.pixel_number[2])
 end
 
@@ -94,7 +102,8 @@ mutable struct Objective <: Detector
     end
 end
 
-function reset_collection!(obj::Objective)
+
+function reset!(obj::Objective)
     obj.collection = 0.0
 end
 
@@ -107,14 +116,14 @@ mutable struct Celestial <: Detector
     # record the ray hitting the celestial sphere
     center:: Point
     radius:: Float64
-
+    field:: Vector{Vector{Float64}} # [[x1, y1, z1, amp1], [x2, y2, z2, amp2], ...]
     geometry:: Union{Volume, Surface} 
 
-    function Celestial(center::Point, radius::Float64, geometry::Union{Volume, Surface, Nothing}=nothing)
+    function Celestial(center::Point, radius::Float64, field::Vector{Vector{Float64}}=[[0.0, 0.0, 0.0, 0.0]], geometry::Union{Volume, Surface, Nothing}=nothing)
         if geometry === nothing
             geometry = make_celestial(center, radius)
         end
-        return new(center, radius, geometry)
+        return new(center, radius, field, geometry)
     end
 end
 
@@ -122,6 +131,9 @@ function add_child!(parent::TrajectoryNode, child::Ray)
     push!(parent.children, TrajectoryNode(child, []))
 end
 
+function reset!(celes::Celestial)
+    celes.field = [[0.0, 0.0, 0.0, 0.0]]
+end
 
 
 function find_leaf_nodes(node::TrajectoryNode, leaves::Vector{TrajectoryNode} = [])
@@ -145,7 +157,7 @@ function find_leaf_nodes(trajectory::Trajectory)
     return leaves
 end
 
-export TrajectoryNode, Trajectory, Detector, TrajectoryRecorder, Counter, Camera, Objective, Celestial, 
+export TrajectoryNode, Trajectory, Detector, reset!, TrajectoryRecorder, Counter, Camera, Objective, Celestial, 
     find_leaf_nodes;
 
 end # module end ----------------------------
